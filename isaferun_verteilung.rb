@@ -1,5 +1,19 @@
 require 'isps'
 
+# TEST DATA
+DefaultStart      = "06.11.2017"  # determines which date is shown as start date 
+#DefQueue          = 1171             # or queue id for forecast # Source West 1212 ohne collection
+#DefQueueInternal  = 1171              # or queue id for internal deducted calls# Source West 1212 ohne collection
+DefErreichbarkeitsQuote = 1.00
+
+
+# REAL DATA 
+#DefaultStart      = nil     # determines which date is shown as start date 
+DefQueue          = 1168              # or queue id for forecast # Source West 1212 ohne collection
+DefQueueInternal  = 1169              # or queue id for internal deducted calls# Source West 1212 ohne collection
+#DefErreichbarkeitsQuote = 0.93
+
+
 # languages that are supported
 English_UK  = ISPS::LANG_ENGLISH_UK
 English_US  = ISPS::LANG_ENGLISH_US
@@ -22,7 +36,7 @@ MAXIMUMDAYS             = 20    #the maximum number of days which can be selecte
 
 NUMDAYS                 =   0   #initial selected value of the drop down list "Time-spans per day""
 
-NUM_PLANNING_UNITS      =   3   #initial selected value value of the drop down list "'Amount of planning units'
+NUM_PLANNING_UNITS      =   8   #initial selected value value of the drop down list "'Amount of planning units'
 MAXIMUM_PLANNING_UNITS  =   10   #the maximum number of planning units which can be selected 
 
 VERSION_FORECAST = 1001
@@ -30,20 +44,13 @@ VERSION_PLANNED = 1004
 VT_HANDLED_CALLS = 1001 
 VT_OFFERED_CALLS = 1002 
 
-DefErreichbarkeitsQuote = 0.93
-DefNumDays              = 14      # initial value of the input field  "number of days"
+DefNumDays              = 4*7     # initial value of the input field  "number of days"
 IsWeekdayDependent      = false   # initial value of check box        "Consider each day of the week" 
 DefCheckPuOpenings      = false   # initial value of check box        "Observe planning unit's business hours",
 DefCheckWrDataAfterCalc = true    # initial value of check box        "Write data after calculation?",
 DefStartNextMonday      = true    # determines if the initally shown startdate is the next monday after the current system date (or the DefaultStart - date)
                                   # if the value is false, the current system date (or the DefaultStart)  will be shown as the initital date
-DefaultStart            = nil     # determines which date is shown as start date 
-                                  # values:     nil = current system date , 
-                                  #             date = the given date is sown, format : dd.mm.yyy eg. 1.1.2007                                    
 
-# string shown when starting the script
-DefQueue          = 1168              # or queue id for forecast
-DefQueueInternal  = 1169              # or queue id for internal deducted calls
 
 DefValueType      = "Calls"              # or value type id
 DefValueTypeAht   = "AHT"                # or value type id
@@ -93,9 +100,15 @@ TimeIntervals  =
 #                          
 # example :  [1001, 1002, TimeIntervalsAct0[1], 1, 1001, 101] 
 
-$preselectedValues[0]   = [0, 0, Array.new(15,""), 1174, 0, 0]
-$preselectedValues[1]   = [0, 0, Array.new(15,""), 1179, 1001, 101]
-$preselectedValues[2]   = [0, 0, Array.new(15,""), 1176, 1001, 101]
+$preselectedValues[0]   = [0, 0, Array.new(15,""), 1174, 0, 0]#Arvato
+$preselectedValues[1]   = [0, 0, Array.new(15,""), 1179, 1001, 101]#Convergis
+$preselectedValues[2]   = [0, 0, Array.new(15,""), 1176, 1001, 101]#egypt
+$preselectedValues[3]   = [0, 0, Array.new(15,""), 1183, 1001, 101]#adecco
+$preselectedValues[4]   = [0, 0, Array.new(15,""), 1185, 1001, 101]#amevida
+$preselectedValues[5]   = [0, 0, Array.new(15,""), 1184, 1001, 101]#conduent
+$preselectedValues[6]   = [0, 0, Array.new(15,""), 1178, 1001, 101]#webhelp
+$preselectedValues[7]   = [0, 0, Array.new(15,""), 1177, 1001, 101]#tp
+
 
 ###############################################################################
 
@@ -184,7 +197,7 @@ class Script
         # Get the curve rep object.
         @repCurve = session.repOf(ISPS::CurveRep)
 
-        @vtTypes = @repCurve.valueTypes
+		@vtTypes = @repCurve.valueTypes
         # Check system Value Types
         raise tr(NO_VALUETYPES_ERROR_TEXT) unless (@vtTypes.length > 0)
         
@@ -252,12 +265,15 @@ class Script
         begin
            @numDays            = (args['nrdays']|| 0).to_i
            @dateStart          = getLsStartDate(args['cdate'])
+           @dateEnd            = getLsStartDate(args['enddate'])
            @reqAdd             = (args['reqaddmode'].to_i == 1)
            @addRows            = (args['addrowsmode'].to_i == 1)
            @chkPuOpening       = (args['puopeningmode'].to_i == 1)
            @chkWrDataAfterCalc = (args['writedataaftercalculation'].to_i == 1)
-          
-            t       = text bold tr(CALC_RESULT_TEXT)
+           
+           @numDays = @dateEnd-@dateStart+1 if @numDays==0
+           
+           t       = text bold tr(CALC_RESULT_TEXT)
             t.style = STYLE_CENTER
             puts  cap(t)
             runCalculation()    
@@ -335,8 +351,8 @@ class Script
           
         #resize dialog via JavaScript
         js = BlockTag.new("script",{:language=>'JavaScript'})
-              js << "if (document.body.clientHeight == 503) {"
-              js << "if (document.body.clientWidth == 533) {"
+              js << "if (document.body.clientHeight < 600) {"
+              js << "if (document.body.clientWidth < 600) {"
               js << "window.resizeTo(#{SCREEN_DIMENSIONS[0]},#{SCREEN_DIMENSIONS[1]});"
               js << "}}"
         puts js
@@ -350,24 +366,33 @@ class Script
     
         
         displayacts = sel('displayacts')
-        for i in 2 .. MAXIMUM_PLANNING_UNITS
+        for i in 1 .. MAXIMUM_PLANNING_UNITS
             displayacts << option(i, i.to_s,i  == @displayedActs)
         end
 
         displayacts.onChange = "LoadAgain();"       
         start_date = getLsStartDate(args['cdate'] || DefaultStart || Date.today.to_s)
+        end_date = getLsStartDate(args['enddate'] || start_date.to_s ) + @numDays
                 
+        
         inpDays  = sel('nrdays')
-        inpDays << option(4*7,"4 Wochen (bis #{(start_date + 4*7)})",@numDays == 4*7)                
-        inpDays << option(5*7,"5 Wochen (bis #{(start_date + 5*7)})",@numDays != 4*7)                
+        inpDays << option(4*7,"4 Wochen",@numDays == 4*7)                
+        inpDays << option(5*7,"5 Wochen",@numDays > 4*7)                
+        inpDays << option(0,"nach Datum",@numDays < 4*7)                
         inpDays.style = STYLE_RIGHT200PX
         inpDays.onChange = "LoadAgain();"       
         inpStart = inp('cdate', "#{(start_date)}")
         inpStart.style = STYLE_RIGHT200PX
         inpStart.class="date"
         inpStart.onChange = "LoadAgain();"       
-        
-        
+
+        inpEndDate = inp('enddate', "#{(end_date || start_date + @numDays-1)}")
+        inpEndDate.style = STYLE_RIGHT200PX
+        inpEndDate.class="date"
+        inpEndDate.disabled = "true" if (@numDays.to_i >= 4*7) 
+        span = BlockTag.new("span")
+        span << inpDays
+        span << inpEndDate      
         if (args['mode'] != nil)      
             checkPuOpenings = (args['puopeningmode'] == "1") 
             checkWrDataAfterCalc = (args['writedataaftercalculation'] == "1") 
@@ -385,7 +410,7 @@ class Script
                 []
             ],
             [
-                [],[tr(NUM_OF_DAYS_TEXT)],[],['', nil, inpDays],
+                [],[tr(NUM_OF_DAYS_TEXT)],[],['', nil, span ],
                 [],[tr(DISPLAYED_PU_TEXT)],[],['', nil, displayacts],
                 []
             ]
@@ -455,11 +480,8 @@ class Script
         raise "Version not found" unless version_forecast && version_planned
         
         fs<< ftable(
-            [nil,"Queue Anrufe Gesamt"         , nil, selQueue],
-            [nil, "Wertetyp Eingehende Anrufe", nil, value_type_offered_calls.name],
-            [nil, "Queue Anrufe intern"         , nil, selQueueInternal],
-            [nil, "Wertetyp Bearbeitete Anrufe", nil, value_type_handled_calls.name],
-            [nil, "Quell-Version"         , nil, version_forecast.name],
+            [nil,"Eingehende Anrufe Gesamt", nil, selQueue,nil, "(Wertetyp: #{value_type_offered_calls.name}, Version: #{version_forecast.name})"],
+            [nil, "Bearbeitete Anrufe intern", nil, selQueueInternal, nil, "(Wertetyp: #{value_type_handled_calls.name}, Version: #{version_planned.name})"],
             [nil, "Ziel-Erreichbarkeitsquote(EQ)",nil,inp('eq',DefErreichbarkeitsQuote.to_s)  ]
         )
         puts fs
@@ -819,13 +841,13 @@ class Script
         end#for  
 
         
-        
+ 
         puts text "Result:"
         @dateStart.upto(@dateStart + (@numDays - 1)) do |date|
-          fs  =  fieldset(bold(date))
+          fs  =  fieldset(bold("#{Localize::WEEKDAYS[date.wday]}, #{date}"))
           externalCapacity = Array.new(@displayedActs)
           forecast = Array.new(@displayedActs)
-          anteil = Array.new(@displayedActs)
+          calls_alone = Array.new(@displayedActs,0)
           oeffnungszeiten = Array.new(@displayedActs)
           for partner in (0 ... @displayedActs)
               externalcurveData[partner].version   = VERSION_PLANNED
@@ -835,14 +857,7 @@ class Script
               forecast[partner] = Array.new(48,0)
               oeffnungszeiten[partner] = opening_times(@repCurve,externalcurveData[partner].curve, date)
           end#for
-          fs << text("Kapazität der Partner: #{externalCapacity.join(", ")}")
-          fs << text("Öffnungszeiten der Partner: #{oeffnungszeiten.map{|o| "#{o[0]/60}-#{o[1]/60}"}.join(", ")}") 
-
-          # Berechne Anteil pro Partner
-          capa = externalCapacity.sum.to_f
-          for partner in (0 ... @displayedActs)
-            anteil[partner] = (capa > 0.0) ? externalCapacity[partner]*opening_time_interval_count(oeffnungszeiten[partner])/(capa*48) : 0.0                
-          end#for
+          text_partnerinfo(fs, externalCapacity,oeffnungszeiten)
 
           
           forecastcurveData.date = date
@@ -852,11 +867,11 @@ class Script
           
           internalcurveData.date = date
           internalcurveData.read(0) or raise "Konnte Queue nicht lesen"
-          internalhandled = internalcurveData.to_a.sum / 100.0
+          internalhandled = intern_gehandelte_calls(forecastcurveData.to_a,internalcurveData.to_a) / 100.0
           fuer_extern = tagesforecast - (internalhandled / @erreichbarkeitsquote)
           fuer_extern = 0 if fuer_extern < 0 
 
-          calls_to_distribute = Array.new
+          calls_to_distribute = Array.new(48,0.0)
 
           fs << text("Intern bearbeitet: #{internalhandled}, damit uebrig #{fuer_extern}")
           if fuer_extern == 0
@@ -869,41 +884,44 @@ class Script
             else
               fs << text("Damit erreichbare EQ: #{(gesamt_extern/fuer_extern)}")
             end
-            
-            
+
+                       
             # For each interval
             internalcurveData.to_a.each_index do |i|
-              calls_to_distribute[i] = (forecastcurveData[i]/100.0 - (internalcurveData[i]/100.0 / @erreichbarkeitsquote)) * (gesamt_extern/fuer_extern)
+              calls_to_distribute[i] = (forecastcurveData[i]/100.0 - internalcurveData[i]/100.0) * (gesamt_extern/fuer_extern)
               calls_to_distribute[i] = 0 if calls_to_distribute[i] < 0
-            
-            end
-            
-            
+			end
+
+
+          # Berechne Anteil pro Partner
+
+          calls_to_distribute.to_a.each_index do |interval|         
+			partners_open = count_partners_open(oeffnungszeiten,interval)
+            if partners_open == 1
+              for partner in (0 ... @displayedActs)
+				calls_alone[partner] += calls_to_distribute[interval] if open_at_interval(oeffnungszeiten[partner],interval)
+              end#for
+            end 
+          end #each_index  
+
+        for partner in (0 ... @displayedActs)
+		  calls_alone[partner] = externalCapacity[partner] if calls_alone[partner] > externalCapacity[partner]
+        end#for
+
             remaining_calls_to_distribute = calls_to_distribute.clone
             c1 = 0
             while (remaining_calls_to_distribute.sum >= 1 && externalCapacity.sum >= 1 && c1<10000)
               c1 +=1
      
-              
-              #suche interval mit den wenigsten partnern              
-              remaining_calls = remaining_calls_to_distribute.clone
-              remaining_calls.each_index do |i|
-                  factor=0
-                for partner in (0 ... @displayedActs) # Set done if not open
-                  factor += 1 if (oeffnungszeiten[partner][0]/30 > i) || (oeffnungszeiten[partner][1]/30 < i && oeffnungszeiten[partner][1]/30 != 0)
-                end#for
-                remaining_calls[i] = remaining_calls[i]*(factor+1)**5
-              end
-                int = remaining_calls.max_interval   # suche interval mit größter restmenge
-              
-
-
+              int = suche_naechstes_interval(remaining_calls_to_distribute,oeffnungszeiten)
               calls = remaining_calls_to_distribute[int]
+              anteil = berechne_anteil_pro_partner(externalCapacity,forecast,remaining_calls_to_distribute)    
+
               calls_remaining = calls
               remaining_calls_to_distribute[int] = 0
               partner_done = Array.new(@displayedActs,0)
               for partner in (0 ... @displayedActs) # Set done if not open
-                partner_done[partner] = 1 if (oeffnungszeiten[partner][0]/30 > int) || (oeffnungszeiten[partner][1]/30 < int && oeffnungszeiten[partner][1]/30 != 0)
+                partner_done[partner] = 1 unless open_at_interval(oeffnungszeiten[partner],int) 
               end#for
 
               c2=0
@@ -916,7 +934,7 @@ class Script
                 for i in (0 ... @displayedActs)
                   partner = i if partner_done[i] == 0 && externalCapacity[partner]>=externalCapacity[i]
                 end #for
-                calls_per_partner = calls * anteil[partner]
+                calls_per_partner = calls * anteil_offen(anteil,partner,int,oeffnungszeiten)
                 calls_per_partner = calls_remaining if (calls_remaining < calls_per_partner) || (calls_remaining > calls_per_partner && (@displayedActs-partner_done.sum)==1)
 
                 if calls_per_partner <= externalCapacity[partner]
@@ -939,33 +957,80 @@ class Script
          end# if fuer_extern
           
           
-          # for each external
-            # get opening times
-          generalforecast = forecastcurveData.to_a #.map{|v| v/100.0}
-          internal = internalcurveData.to_a #.map{|v| v/100.0}
-          distribute = calls_to_distribute #.map{|c| round(c,1)}
-          fs << html_table(forecast,generalforecast,internal,distribute )
+          fs << html_table(forecast,forecastcurveData.to_a ,internalcurveData.to_a ,calls_to_distribute )
           puts fs
 
-          # Write calculated curve data for externals
-          for i in (0 ... @displayedActs)
-
-            externalcurveData[i].version   = VERSION_FORECAST
-            externalcurveData[i].read(0) or raise "Konnte Queue nicht lesen"
-            forecast[i].each_index {|ind| externalcurveData[i][ind] = forecast[i][ind]}
-            externalcurveData[i].write!
-        end#for  
+          write_calculated_curve_data(externalcurveData,forecast)
           
-          end#each date
-        
-
-
+      end#each date
         
     end#def runCalculation 
     
+    def write_calculated_curve_data(externalcurveData,forecast)
+      for i in (0 ... @displayedActs)
+        externalcurveData[i].version   = VERSION_FORECAST
+        externalcurveData[i].read(0) or raise "Konnte Queue nicht lesen"
+        forecast[i].each_index {|ind| externalcurveData[i][ind] = forecast[i][ind] * 100.0 }
+        externalcurveData[i].write!
+      end#for  
+    end #def write...
+    
+    
+    def suche_naechstes_interval(remaining_calls_to_distribute,oeffnungszeiten)
+      remaining_calls = remaining_calls_to_distribute.clone
+      remaining_calls.each_index do |i|
+        return i if remaining_calls[i]>0 && count_partners_open(oeffnungszeiten,i)==1
+		factor=0
+        for partner in (0 ... @displayedActs) # Set done if not open
+          factor += 1 unless open_at_interval(oeffnungszeiten[partner],i) 
+        end#for
+        remaining_calls[i] = remaining_calls[i].to_f * (factor+1)**5
+      end
+      return remaining_calls.max_interval   # suche interval mit größter restmenge      
+
+    end 
+    
+    
+    # Zähle calls, die intern gehandelt werden, aber zähle nicht negative wenn mehr interne kapazität als forecast da ist
+    def intern_gehandelte_calls(forecast,internal)
+      sum = 0.0
+      forecast.each_index do |i|
+        sum += (forecast[i] > internal[i]) ? internal[i] : forecast[i]
+      end
+      return sum
+    end
+    
+    #Gibt den anteil zurück bezogen auf die anzah lder partner die offen haben (also wenn ur 2 partner offen haben von 3 und jeder hat 1/3, dann sollte 1/2 zurückgegeben werden)   
+    def anteil_offen(anteil,partner,interval,oeffnungszeiten)
+      return 0.0 unless open_at_interval(oeffnungszeiten[partner],interval)
+      gesamt = 0.0
+      for p in (0 ... @displayedActs)
+         gesamt += anteil[p] if open_at_interval(oeffnungszeiten[p],interval)
+      end
+      anteil[partner]/gesamt
+    end 
+
+    def open_at_interval(h,i)
+      return false unless h
+	  from = h[0]/30
+      to = h[1] == 0 ? 48 : h[1]/30
+      return (from<=i && to > i)
+    end 
+
+    
+    #how many partners have open on this slot
+    def count_partners_open(oeffnungszeiten,interval)
+      count = 0
+      oeffnungszeiten.each do |op|
+        count +=1 if open_at_interval(op,interval) # op[0]/30<=interval && (op[1]/30 > interval || op[1]==0)
+      end
+      return count
+    end
+    
     def opening_times(curverep,curve, date)
-      eventid = curverep.calendar(curve.id, date, date).first.eventType.id
-      return ([curve.eventBegin(eventid),curve.eventEnd(eventid)])
+	  eventid = curverep.calendar(curve.id, date, date).first.eventType.id
+	  return nil unless curve.eventTypes().include?(eventid)
+	  return ([curve.eventBegin(eventid),curve.eventEnd(eventid)])
     end#def opening_times
 
     def opening_time_interval_count(h) #h =[from, to] in minutes
@@ -974,8 +1039,23 @@ class Script
       return(48 - from - (48-to))
     end#def opening_times
 
-    
+    def berechne_anteil_pro_partner(externalCapacity,forecast,remaining_calls_to_distribute)    
+	  anteil = Array.new(@displayedActs,0)
+      remaining_capa = remaining_calls_to_distribute.sum.to_f # What is the capa in all intervals where there is not only one partner
+        for partner in (0 ... @displayedActs)
+		  anteil[partner] = (remaining_capa > 0.0) ? externalCapacity[partner]  / remaining_capa : 0.0
+        end#for
 
+        return anteil 
+    end
+ 
+  
+
+  def text_partnerinfo(fs, externalCapacity,oeffnungszeiten)
+    fs << text("Kapazität der Partner: #{externalCapacity.join(", ")}") 
+    fs << text("Öffnungszeiten der Partner: #{oeffnungszeiten.map{|o| o ? "#{secondsToTimeString(o[0]*60)}-#{secondsToTimeString(o[1]*60)}" : "-"}.join(", ")}") 
+  end   
+    
   def html_table(forecast,generalforecast,internal,distribute)
         @curves_hash = Hash.new
         @curves.each {|c| @curves_hash[c.id] = c }
@@ -1005,10 +1085,10 @@ class Script
             tr << td
             generalforecast.each do |h|
               td = BlockTag.new("td")
-              td << h / 100.0
+              td << (h / 100.0).to_s.gsub(/\./,',')
               tr << td
             end         
-            tr << (BlockTag.new("td") << (generalforecast.sum / 100.0).to_s)
+            tr << (BlockTag.new("td") << (generalforecast.sum / 100.0).to_s.gsub(/\./,','))
             table << tr
 
             tr = BlockTag.new("tr")
@@ -1017,10 +1097,10 @@ class Script
             tr << td
             internal.each do |h|
               td = BlockTag.new("td")
-              td << h / 100.0
+              td << (h / 100.0).to_s.gsub(/\./,',')
               tr << td
             end         
-            tr << (BlockTag.new("td") << (internal.sum / 100.0).to_s)
+            tr << (BlockTag.new("td") << (internal.sum / 100.0).to_s.gsub(/\./,','))
             table << tr
 
             tr = BlockTag.new("tr")
@@ -1029,10 +1109,10 @@ class Script
             tr << td
             distribute.each do |h|
               td = BlockTag.new("td")
-              td << round(h,1)
+              td << round(h,1).to_s.gsub(/\./,',')
               tr << td
             end         
-            tr << (BlockTag.new("td") << (round(distribute.sum,1)).to_s)
+            tr << (BlockTag.new("td") << (round(distribute.sum,1)).to_s.gsub(/\./,','))
             table << tr
 
 
@@ -1044,10 +1124,10 @@ class Script
               tr << td
             forecast[row].each do |val|
               td = BlockTag.new("td")
-              td << (val ? round(val,1) : "-")
+              td << (val ? round(val,1) : "-").to_s.gsub(/\./,',')
               tr << td
             end         
-            tr << (BlockTag.new("td") << (round(forecast[row].sum,1)).to_s)
+            tr << (BlockTag.new("td") << (round(forecast[row].sum,1)).to_s.gsub(/\./,','))
             table << tr
           end
           table
@@ -1710,6 +1790,9 @@ end #class Date
 #
 ################################################################################
 module Localize
+  WEEKDAYS = ["So","Mo","Di","Mi","Do","Fr","Sa"]
+
+
 
     THIS_SCRIPT_NAME        = { English_UK => 'iWFM Requirement Script (Distribute Workload between Multiple Planning Units)',
                                 English_US => 'iWFM Requirement Script (Distribute Workload between Multiple Planning Units)',
