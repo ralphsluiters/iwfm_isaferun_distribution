@@ -830,10 +830,8 @@ class Script
             internalcurveData.version   = VERSION_PLANNED
             
            
-
         externalcurveData = Array.new(@displayedActs)
         for i in (0 ... @displayedActs)
-
             externalcurveData[i]           = ISPS::CurveData.new(@repCurve)
             externalcurveData[i].curve     = args['tarqueue' + i.to_s].to_i
             externalcurveData[i].valueType = VT_HANDLED_CALLS
@@ -846,9 +844,9 @@ class Script
         @dateStart.upto(@dateStart + (@numDays - 1)) do |date|
           fs  =  fieldset(bold("#{Localize::WEEKDAYS[date.wday]}, #{date}"))
           externalCapacity = Array.new(@displayedActs)
-          forecast = Array.new(@displayedActs)
-          calls_alone = Array.new(@displayedActs,0)
-          oeffnungszeiten = Array.new(@displayedActs)
+          forecast         = Array.new(@displayedActs)
+          calls_alone      = Array.new(@displayedActs,0)
+          oeffnungszeiten  = Array.new(@displayedActs)
           for partner in (0 ... @displayedActs)
               externalcurveData[partner].version   = VERSION_PLANNED
               externalcurveData[partner].date      = date
@@ -857,38 +855,44 @@ class Script
               forecast[partner] = Array.new(48,0)
               oeffnungszeiten[partner] = opening_times(@repCurve,externalcurveData[partner].curve, date)
           end#for
-          text_partnerinfo(fs, externalCapacity,oeffnungszeiten)
+          fs << text("Kapazität der Partner: #{externalCapacity.join(", ")}") 
 
-          
+          # Read forecast curve data
           forecastcurveData.date = date
           forecastcurveData.read(0) or raise "Konnte Queue nicht lesen"
+
           tagesforecast = forecastcurveData.to_a.sum / 100.0
-          fs << text("Tagesforecast: #{tagesforecast}, damit bei EQ #{@erreichbarkeitsquote} also #{tagesforecast*@erreichbarkeitsquote}")
-          
+          fs << text("Tagesforecast: #{round(tagesforecast,0)} Anrufe, damit bei Ziel-EQ #{round(@erreichbarkeitsquote,2)} also #{round(tagesforecast*@erreichbarkeitsquote,0)} Anrufe")
+
+          # Read internal curve data
           internalcurveData.date = date
           internalcurveData.read(0) or raise "Konnte Queue nicht lesen"
+
           internalhandled = intern_gehandelte_calls(forecastcurveData.to_a,internalcurveData.to_a) / 100.0
-          fuer_extern = tagesforecast - (internalhandled / @erreichbarkeitsquote)
+          fuer_extern = (tagesforecast*@erreichbarkeitsquote) - internalhandled 
           fuer_extern = 0 if fuer_extern < 0 
 
           calls_to_distribute = Array.new(48,0.0)
 
-          fs << text("Intern bearbeitet: #{internalhandled}, damit uebrig #{fuer_extern}")
+          fs << text("Intern bearbeitet: #{round(internalhandled,0)}, damit uebrig #{round(fuer_extern,0)}")
           if fuer_extern == 0
             fs << text("Alle Calls werden intern gehandled")
-          else
-            gesamt_extern = 0
+          else            
+			gesamt_extern = 0
+			actual_eq=1.0
             externalCapacity.each {|val| gesamt_extern += val}
-            if gesamt_extern > (fuer_extern / @erreichbarkeitsquote)
-              fs << text("EQ kann erreicht werden")
+            if gesamt_extern >= fuer_extern
+			  actual_eq=(gesamt_extern+internalhandled)/tagesforecast.to_f
+              fs << text("EQ kann erreicht werden (Es wird eine EQ von #{round(actual_eq,2)} erreicht.)")
             else
-              fs << text("Damit erreichbare EQ: #{(gesamt_extern/fuer_extern)}")
+			  actual_eq=(gesamt_extern+internalhandled)/tagesforecast.to_f
+              fs << text("Extern kann #{round(gesamt_extern,0)} Anrufe bearbeiten, damit erreichbare EQ: #{round(actual_eq,2)}")
             end
 
                        
             # For each interval
             internalcurveData.to_a.each_index do |i|
-              calls_to_distribute[i] = (forecastcurveData[i]/100.0 - internalcurveData[i]/100.0) * (gesamt_extern/fuer_extern)
+              calls_to_distribute[i] = ((forecastcurveData[i]/100.0*actual_eq) - internalcurveData[i]/100.0)
               calls_to_distribute[i] = 0 if calls_to_distribute[i] < 0
 			end
 
@@ -909,12 +913,10 @@ class Script
         end#for
 
             remaining_calls_to_distribute = calls_to_distribute.clone
-            c1 = 0
-            while (remaining_calls_to_distribute.sum >= 1 && externalCapacity.sum >= 1 && c1<10000)
-              c1 +=1
+            while (remaining_calls_to_distribute.sum >= 1 && externalCapacity.sum >= 1)
      
-              int = suche_naechstes_interval(remaining_calls_to_distribute,oeffnungszeiten)
-              calls = remaining_calls_to_distribute[int]
+              int    = suche_naechstes_interval(remaining_calls_to_distribute,oeffnungszeiten)
+              calls  = remaining_calls_to_distribute[int]
               anteil = berechne_anteil_pro_partner(externalCapacity,forecast,remaining_calls_to_distribute)    
 
               calls_remaining = calls
@@ -924,40 +926,31 @@ class Script
                 partner_done[partner] = 1 unless open_at_interval(oeffnungszeiten[partner],int) 
               end#for
 
-              c2=0
-              while partner_done.sum < @displayedActs && c2<10000 #Solange noch ein Partner da
-                c2+=1
-                partner = 0
-                while partner_done[partner]==1 && partner < @displayedActs # Search first partner which is not done
-                  partner += 1
-                end 
-                for i in (0 ... @displayedActs)
-                  partner = i if partner_done[i] == 0 && externalCapacity[partner]>=externalCapacity[i]
-                end #for
+              while partner_done.sum < @displayedActs  #Solange noch ein Partner da
+                partner = select_next_partner_to_forecast(partner_done,externalCapacity)
+
                 calls_per_partner = calls * anteil_offen(anteil,partner,int,oeffnungszeiten)
                 calls_per_partner = calls_remaining if (calls_remaining < calls_per_partner) || (calls_remaining > calls_per_partner && (@displayedActs-partner_done.sum)==1)
 
                 if calls_per_partner <= externalCapacity[partner]
-                    forecast[partner][int] = calls_per_partner
+                    forecast[partner][int]     = calls_per_partner
                     externalCapacity[partner] -= calls_per_partner
-                    calls_remaining -= calls_per_partner
+                    calls_remaining           -= calls_per_partner
                 else
-                    forecast[partner][int] = externalCapacity[partner]
-                    calls_remaining -= externalCapacity[partner]
-                    externalCapacity[partner] = 0
+                    forecast[partner][int]     = externalCapacity[partner]
+                    calls_remaining           -= externalCapacity[partner]
+                    externalCapacity[partner]  = 0
                 end
 
                 partner_done[partner] = 1
                 
               end#while partner_done              
-              puts "Error c2" if c2>9999 #RS XXX raus
             end#while
-              puts "Error c1" if c1>9999 #RS XXX raus
             
          end# if fuer_extern
           
           
-          fs << html_table(forecast,forecastcurveData.to_a ,internalcurveData.to_a ,calls_to_distribute )
+          fs << html_table(forecast,forecastcurveData.to_a ,internalcurveData.to_a ,calls_to_distribute,oeffnungszeiten )
           puts fs
 
           write_calculated_curve_data(externalcurveData,forecast)
@@ -965,7 +958,20 @@ class Script
       end#each date
         
     end#def runCalculation 
-    
+  
+
+    def select_next_partner_to_forecast(partner_done,externalCapacity)
+		partner = 0
+		while partner_done[partner]==1 && partner < partner_done.size # Search first partner which is not done
+		  partner += 1
+		end 
+		for i in (0 ... partner_done.size) # Now find partner with lowest capacity
+		  partner = i if partner_done[i] == 0 && externalCapacity[partner]>=externalCapacity[i]
+		end #for
+        return partner
+	end
+				
+  
     def write_calculated_curve_data(externalcurveData,forecast)
       for i in (0 ... @displayedActs)
         externalcurveData[i].version   = VERSION_FORECAST
@@ -1049,14 +1055,15 @@ class Script
         return anteil 
     end
  
-  
-
-  def text_partnerinfo(fs, externalCapacity,oeffnungszeiten)
-    fs << text("Kapazität der Partner: #{externalCapacity.join(", ")}") 
-    fs << text("Öffnungszeiten der Partner: #{oeffnungszeiten.map{|o| o ? "#{secondsToTimeString(o[0]*60)}-#{secondsToTimeString(o[1]*60)}" : "-"}.join(", ")}") 
-  end   
     
-  def html_table(forecast,generalforecast,internal,distribute)
+  def tcell(content, css=nil)
+    td = BlockTag.new("td")
+    td << content
+    td.style=css if css 
+	td
+  end
+  
+  def html_table(forecast,generalforecast,internal,distribute,oeffnungszeiten)
         @curves_hash = Hash.new
         @curves.each {|c| @curves_hash[c.id] = c }
         
@@ -1066,68 +1073,52 @@ class Script
           table = BlockTag.new("table") 
           table.border=1
             tr = BlockTag.new("tr")
-            td = BlockTag.new("td")
-            td << "Intervall"
-            tr << td
+            tr << tcell("Intervall","background-color:#99ccff;")
+            tr << tcell("Öffn.","background-color:#99ccff;")
             forecast.first.each_index do |h|
-              td = BlockTag.new("td")
-              td << secondsToTimeString(h*1800)
-              tr << td
+              tr << tcell(secondsToTimeString(h*1800),"background-color:#99ccff;")
             end         
-            td = BlockTag.new("td")
-            td << "Summe"
-            tr << td
+            tr << tcell("Summe","background-color:#99ccff;")
             table << tr
 
             tr = BlockTag.new("tr")
-            td = BlockTag.new("td")
-            td << "Gesamtforecast"
-            tr << td
+            tr << tcell("Gesamtforecast","background-color:#99ccff;")
+            tr << tcell("","background-color:#99ccff;")
             generalforecast.each do |h|
-              td = BlockTag.new("td")
-              td << (h / 100.0).to_s.gsub(/\./,',')
-              tr << td
+              tr << tcell((h / 100.0).to_s.gsub(/\./,','))
             end         
             tr << (BlockTag.new("td") << (generalforecast.sum / 100.0).to_s.gsub(/\./,','))
             table << tr
 
             tr = BlockTag.new("tr")
-            td = BlockTag.new("td")
-            td << "Intern"
-            tr << td
+            tr << tcell("Intern","background-color:#99ccff;")
+            tr << tcell("","background-color:#99ccff;")
             internal.each do |h|
-              td = BlockTag.new("td")
-              td << (h / 100.0).to_s.gsub(/\./,',')
-              tr << td
+              tr << tcell((h / 100.0).to_s.gsub(/\./,','))
             end         
             tr << (BlockTag.new("td") << (internal.sum / 100.0).to_s.gsub(/\./,','))
             table << tr
 
             tr = BlockTag.new("tr")
-            td = BlockTag.new("td")
-            td << "GesamtExtern"
-            tr << td
+            tr << tcell("GesamtExtern","background-color:#99ccff;")
+            tr << tcell("","background-color:#99ccff;")
             distribute.each do |h|
-              td = BlockTag.new("td")
-              td << round(h,1).to_s.gsub(/\./,',')
-              tr << td
+              tr << tcell(round(h,1).to_s.gsub(/\./,','))
             end         
-            tr << (BlockTag.new("td") << (round(distribute.sum,1)).to_s.gsub(/\./,','))
+            tr << tcell((round(distribute.sum,1)).to_s.gsub(/\./,','))
             table << tr
 
 
 
             forecast.each_index do |row|
             tr = BlockTag.new("tr")
-              td = BlockTag.new("td")
-              td << @curves_hash[args['tarqueue'   + row.to_s].to_i].name
-              tr << td
-            forecast[row].each do |val|
-              td = BlockTag.new("td")
-              td << (val ? round(val,1) : "-").to_s.gsub(/\./,',')
-              tr << td
+              tr << tcell(@curves_hash[args['tarqueue'   + row.to_s].to_i].name,"background-color:#99ccff;")
+			  o= oeffnungszeiten[row]
+              tr << tcell((o ? "#{secondsToTimeString(o[0]*60)}-#{secondsToTimeString(o[1]*60)}" : "closed"),"background-color:#99ccff;")
+            forecast[row].each_index do |i|
+              tr << tcell((forecast[row][i] ? round(forecast[row][i],1) : "-").to_s.gsub(/\./,','),open_at_interval(o,i) ? nil : "background-color:#f5f5f5;")
             end         
-            tr << (BlockTag.new("td") << (round(forecast[row].sum,1)).to_s.gsub(/\./,','))
+            tr << tcell((round(forecast[row].sum,1)).to_s.gsub(/\./,','))
             table << tr
           end
           table
